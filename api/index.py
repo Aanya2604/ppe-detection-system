@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
 import numpy as np
 import onnxruntime as ort
@@ -6,20 +6,33 @@ import os
 
 app = Flask(__name__)
 
-# Load model directly from the api folder
-current_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(current_dir, "best.onnx")
+# Paths
+base_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(base_dir, "best.onnx")
+public_dir = os.path.join(base_dir, "..", "public")
 
+# Load ONNX model
 session = None
 if os.path.exists(model_path):
     session = ort.InferenceSession(model_path)
 
 CLASSES = ["helmet", "mask", "person", "vest"]
 
+# Root route: serve frontend UI
+@app.route('/')
+def home():
+    return send_from_directory(public_dir, 'index.html')
+
+# Catch-all static route
+@app.route('/<path:path>')
+def static_files(path):
+    return send_from_directory(public_dir, path)
+
+# Inference API endpoint
 @app.route('/api/detect', methods=['POST'])
 def detect():
     if session is None:
-        return jsonify({"error": "Model failed to load on server"}), 500
+        return jsonify({"error": "Model not found on server"}), 500
 
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -27,16 +40,15 @@ def detect():
     file = request.files['file']
     img = Image.open(file.stream).convert('RGB').resize((640, 640))
     
-    # Preprocess image
+    # Preprocess
     img_data = np.array(img).astype('float32') / 255.0
     img_data = np.transpose(img_data, (2, 0, 1))
     img_data = np.expand_dims(img_data, axis=0)
 
-    # Run inference
+    # Inference
     input_name = session.get_inputs()[0].name
     outputs = session.run(None, {input_name: img_data})[0]
 
-    # Process detections
     detections = []
     for pred in outputs[0].T:
         scores = pred[4:]
