@@ -6,21 +6,28 @@ import os
 
 app = Flask(__name__)
 
-# Load ONNX model
-model_path = os.path.join(os.path.dirname(__file__), "..", "best.onnx")
-session = ort.InferenceSession(model_path)
+# Load model directly from the api folder
+current_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(current_dir, "best.onnx")
+
+session = None
+if os.path.exists(model_path):
+    session = ort.InferenceSession(model_path)
 
 CLASSES = ["helmet", "mask", "person", "vest"]
 
 @app.route('/api/detect', methods=['POST'])
 def detect():
+    if session is None:
+        return jsonify({"error": "Model failed to load on server"}), 500
+
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
     
     file = request.files['file']
     img = Image.open(file.stream).convert('RGB').resize((640, 640))
     
-    # Normalize and transform to NCHW
+    # Preprocess image
     img_data = np.array(img).astype('float32') / 255.0
     img_data = np.transpose(img_data, (2, 0, 1))
     img_data = np.expand_dims(img_data, axis=0)
@@ -29,7 +36,7 @@ def detect():
     input_name = session.get_inputs()[0].name
     outputs = session.run(None, {input_name: img_data})[0]
 
-    # Filter detections
+    # Process detections
     detections = []
     for pred in outputs[0].T:
         scores = pred[4:]
